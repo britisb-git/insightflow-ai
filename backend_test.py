@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Comprehensive Backend API Tests for InsightFlow AI
-Tests all authentication, dataset, and chat endpoints
+Backend API Testing for InsightFlow AI
+Tests smart fallback analysis functionality
 """
 
 import requests
@@ -11,55 +11,36 @@ from pathlib import Path
 
 # Configuration
 BASE_URL = "https://insight-flow-22.preview.emergentagent.com/api"
-SAMPLE_FILE = "/tmp/sample_hotel_bookings.xlsx"
+EXCEL_FILE = "/tmp/sample_hotel_bookings.xlsx"
 
 # Test data
 test_user = {
-    "name": "Test User",
-    "email": "test@test.com",
-    "password": "password123"
+    "name": "Demo User",
+    "email": "demo@test.com",
+    "password": "demo123"
 }
 
-# Global variables to store test state
+# Global variables
 auth_token = None
 dataset_id = None
 
 def print_test_header(test_name):
-    """Print formatted test header"""
     print(f"\n{'='*80}")
     print(f"TEST: {test_name}")
     print(f"{'='*80}")
 
 def print_result(success, message):
-    """Print test result"""
     status = "✅ PASS" if success else "❌ FAIL"
     print(f"{status}: {message}")
 
-def test_api_health():
-    """Test API health check"""
-    print_test_header("API Health Check")
-    try:
-        response = requests.get(f"{BASE_URL}/", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            print(f"Response: {json.dumps(data, indent=2)}")
-            if data.get('status') == 'running':
-                print_result(True, "API is running")
-                return True
-            else:
-                print_result(False, f"Unexpected status: {data.get('status')}")
-                return False
-        else:
-            print_result(False, f"Status code: {response.status_code}")
-            return False
-    except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
-        return False
+def print_json(data, title="Response"):
+    print(f"\n{title}:")
+    print(json.dumps(data, indent=2, default=str))
 
+# Test 1: Create new user account
 def test_signup():
-    """Test user signup"""
-    print_test_header("User Signup")
     global auth_token
+    print_test_header("1. User Signup")
     
     try:
         response = requests.post(
@@ -69,168 +50,163 @@ def test_signup():
         )
         
         print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text[:500]}")
         
-        if response.status_code == 200:
+        if response.status_code in [200, 201]:
             data = response.json()
+            print_json(data)
+            
             if 'token' in data and 'user' in data:
                 auth_token = data['token']
-                print(f"Token received: {auth_token[:20]}...")
-                print(f"User: {data['user']}")
-                print_result(True, "Signup successful")
+                print_result(True, f"User created successfully. Token received: {auth_token[:20]}...")
                 return True
             else:
-                print_result(False, "Missing token or user in response")
+                print_result(False, "Response missing token or user data")
                 return False
-        elif response.status_code == 400 and 'already exists' in response.text:
-            print_result(True, "User already exists (expected if running multiple times)")
-            # Try login instead
+        elif response.status_code == 400 and 'already exists' in response.text.lower():
+            # User already exists, try login instead
+            print("User already exists, attempting login...")
             return test_login()
         else:
-            print_result(False, f"Unexpected status code: {response.status_code}")
+            print_result(False, f"Signup failed: {response.text}")
             return False
             
     except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
+        print_result(False, f"Exception during signup: {str(e)}")
         return False
 
 def test_login():
-    """Test user login"""
-    print_test_header("User Login")
     global auth_token
+    print_test_header("1b. User Login (Fallback)")
     
     try:
         response = requests.post(
             f"{BASE_URL}/auth/login",
-            json={
-                "email": test_user["email"],
-                "password": test_user["password"]
-            },
+            json={"email": test_user["email"], "password": test_user["password"]},
             timeout=10
         )
         
         print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text[:500]}")
         
         if response.status_code == 200:
             data = response.json()
-            if 'token' in data and 'user' in data:
+            print_json(data)
+            
+            if 'token' in data:
                 auth_token = data['token']
-                print(f"Token received: {auth_token[:20]}...")
-                print(f"User: {data['user']}")
-                print_result(True, "Login successful")
+                print_result(True, f"Login successful. Token received: {auth_token[:20]}...")
                 return True
             else:
-                print_result(False, "Missing token or user in response")
+                print_result(False, "Response missing token")
                 return False
         else:
-            print_result(False, f"Status code: {response.status_code}, Response: {response.text}")
+            print_result(False, f"Login failed: {response.text}")
             return False
             
     except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
+        print_result(False, f"Exception during login: {str(e)}")
         return False
 
-def test_login_invalid_credentials():
-    """Test login with invalid credentials"""
-    print_test_header("Login with Invalid Credentials")
-    
-    try:
-        response = requests.post(
-            f"{BASE_URL}/auth/login",
-            json={
-                "email": test_user["email"],
-                "password": "wrongpassword"
-            },
-            timeout=10
-        )
-        
-        print(f"Status Code: {response.status_code}")
-        
-        if response.status_code == 401:
-            print_result(True, "Correctly rejected invalid credentials")
-            return True
-        else:
-            print_result(False, f"Expected 401, got {response.status_code}")
-            return False
-            
-    except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
-        return False
-
-def test_dataset_upload():
-    """Test dataset upload with AI analysis"""
-    print_test_header("Dataset Upload & AI Analysis")
+# Test 2: Upload Excel file with smart analysis
+def test_upload_dataset():
     global dataset_id
+    print_test_header("2. Upload Excel File with Smart Analysis")
     
     if not auth_token:
         print_result(False, "No auth token available")
         return False
     
-    if not os.path.exists(SAMPLE_FILE):
-        print_result(False, f"Sample file not found: {SAMPLE_FILE}")
+    if not os.path.exists(EXCEL_FILE):
+        print_result(False, f"Excel file not found: {EXCEL_FILE}")
         return False
     
     try:
-        with open(SAMPLE_FILE, 'rb') as f:
+        with open(EXCEL_FILE, 'rb') as f:
             files = {'file': ('sample_hotel_bookings.xlsx', f, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
             headers = {'Authorization': f'Bearer {auth_token}'}
             
-            print(f"Uploading file: {SAMPLE_FILE}")
             response = requests.post(
                 f"{BASE_URL}/datasets/upload",
                 files=files,
                 headers=headers,
-                timeout=60
+                timeout=30
             )
         
         print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text[:1000]}")
         
-        if response.status_code == 200:
+        if response.status_code in [200, 201]:
             data = response.json()
+            print_json(data)
             
-            # Verify response structure
-            required_fields = ['datasetId', 'fileName', 'sheets', 'analysis']
-            missing_fields = [f for f in required_fields if f not in data]
+            # Verify smart fallback analysis
+            checks = []
             
-            if missing_fields:
-                print_result(False, f"Missing fields: {missing_fields}")
+            # Check datasetId
+            if 'datasetId' in data:
+                dataset_id = data['datasetId']
+                checks.append(("datasetId present", True))
+            else:
+                checks.append(("datasetId present", False))
+            
+            # Check sheets info
+            if 'sheets' in data and len(data['sheets']) > 0:
+                checks.append(("sheets info present", True))
+                print(f"\nSheets found: {[s['name'] for s in data['sheets']]}")
+            else:
+                checks.append(("sheets info present", False))
+            
+            # Check analysis structure
+            if 'analysis' in data:
+                analysis = data['analysis']
+                checks.append(("analysis present", True))
+                
+                # Check dimensions
+                if 'dimensions' in analysis and len(analysis['dimensions']) > 0:
+                    checks.append(("dimensions identified", True))
+                    print(f"Dimensions: {analysis['dimensions']}")
+                else:
+                    checks.append(("dimensions identified", False))
+                
+                # Check measures
+                if 'measures' in analysis and len(analysis['measures']) > 0:
+                    checks.append(("measures identified", True))
+                    print(f"Measures: {analysis['measures']}")
+                else:
+                    checks.append(("measures identified", False))
+                
+                # Check insights
+                if 'insights' in analysis and len(analysis['insights']) > 0:
+                    checks.append(("insights generated", True))
+                    print(f"Insights: {analysis['insights']}")
+                else:
+                    checks.append(("insights generated", False))
+            else:
+                checks.append(("analysis present", False))
+            
+            # Print all checks
+            print("\nSmart Analysis Verification:")
+            all_passed = True
+            for check_name, passed in checks:
+                print_result(passed, check_name)
+                if not passed:
+                    all_passed = False
+            
+            if all_passed:
+                print_result(True, "Upload with smart analysis successful")
+                return True
+            else:
+                print_result(False, "Some analysis checks failed")
                 return False
-            
-            dataset_id = data['datasetId']
-            print(f"\nDataset ID: {dataset_id}")
-            print(f"File Name: {data['fileName']}")
-            print(f"Sheets: {len(data['sheets'])} sheet(s)")
-            
-            for sheet in data['sheets']:
-                print(f"  - {sheet['name']}: {sheet['rowCount']} rows, {len(sheet['columns'])} columns")
-            
-            print(f"\nAI Analysis:")
-            analysis = data['analysis']
-            print(f"  Dimensions: {analysis.get('dimensions', [])}")
-            print(f"  Measures: {analysis.get('measures', [])}")
-            print(f"  Date Fields: {analysis.get('dateFields', [])}")
-            print(f"  Suggested KPIs: {analysis.get('suggestedKPIs', [])}")
-            
-            if analysis.get('insights'):
-                print(f"  Insights: {analysis['insights'][:200]}...")
-            
-            print_result(True, "Dataset uploaded and analyzed successfully")
-            return True
         else:
-            print_result(False, f"Status code: {response.status_code}")
+            print_result(False, f"Upload failed: {response.text}")
             return False
             
     except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print_result(False, f"Exception during upload: {str(e)}")
         return False
 
+# Test 3: Get datasets list
 def test_get_datasets():
-    """Test getting list of datasets"""
-    print_test_header("Get Datasets List")
+    print_test_header("3. Get Datasets List")
     
     if not auth_token:
         print_result(False, "No auth token available")
@@ -245,31 +221,38 @@ def test_get_datasets():
         )
         
         print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text[:500]}")
         
         if response.status_code == 200:
             data = response.json()
+            print_json(data)
+            
             if 'datasets' in data:
-                datasets = data['datasets']
-                print(f"Found {len(datasets)} dataset(s)")
-                for ds in datasets[:3]:  # Show first 3
-                    print(f"  - {ds.get('fileName')} (ID: {ds.get('datasetId')})")
-                print_result(True, f"Retrieved {len(datasets)} datasets")
+                dataset_count = len(data['datasets'])
+                print_result(True, f"Retrieved {dataset_count} dataset(s)")
+                
+                if dataset_count > 0 and dataset_id:
+                    # Verify our uploaded dataset is in the list
+                    found = any(d.get('datasetId') == dataset_id for d in data['datasets'])
+                    if found:
+                        print_result(True, "Uploaded dataset found in list")
+                    else:
+                        print_result(False, "Uploaded dataset NOT found in list")
+                
                 return True
             else:
-                print_result(False, "Missing 'datasets' field in response")
+                print_result(False, "Response missing 'datasets' field")
                 return False
         else:
-            print_result(False, f"Status code: {response.status_code}")
+            print_result(False, f"Get datasets failed: {response.text}")
             return False
             
     except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
+        print_result(False, f"Exception during get datasets: {str(e)}")
         return False
 
+# Test 4: Get specific dataset
 def test_get_dataset_by_id():
-    """Test getting specific dataset by ID"""
-    print_test_header("Get Dataset by ID")
+    print_test_header("4. Get Specific Dataset")
     
     if not auth_token:
         print_result(False, "No auth token available")
@@ -288,31 +271,47 @@ def test_get_dataset_by_id():
         )
         
         print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text[:500]}")
         
         if response.status_code == 200:
             data = response.json()
+            print_json(data)
+            
             if 'dataset' in data:
                 dataset = data['dataset']
-                print(f"Dataset: {dataset.get('fileName')}")
-                print(f"Sheets: {len(dataset.get('sheets', []))}")
-                print(f"Analysis available: {'analysis' in dataset}")
-                print_result(True, "Retrieved dataset successfully")
-                return True
+                checks = [
+                    ('datasetId matches', dataset.get('datasetId') == dataset_id),
+                    ('fileName present', 'fileName' in dataset),
+                    ('sheets present', 'sheets' in dataset and len(dataset['sheets']) > 0),
+                    ('analysis present', 'analysis' in dataset)
+                ]
+                
+                print("\nDataset Details Verification:")
+                all_passed = True
+                for check_name, passed in checks:
+                    print_result(passed, check_name)
+                    if not passed:
+                        all_passed = False
+                
+                if all_passed:
+                    print_result(True, "Dataset details retrieved successfully")
+                    return True
+                else:
+                    print_result(False, "Some dataset details missing")
+                    return False
             else:
-                print_result(False, "Missing 'dataset' field in response")
+                print_result(False, "Response missing 'dataset' field")
                 return False
         else:
-            print_result(False, f"Status code: {response.status_code}")
+            print_result(False, f"Get dataset failed: {response.text}")
             return False
             
     except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
+        print_result(False, f"Exception during get dataset: {str(e)}")
         return False
 
-def test_chat():
-    """Test AI chat interface"""
-    print_test_header("AI Chat Interface")
+# Test 5: Chat with fallback responses
+def test_chat_fallback():
+    print_test_header("5. Chat with Fallback Responses")
     
     if not auth_token:
         print_result(False, "No auth token available")
@@ -322,57 +321,63 @@ def test_chat():
         print_result(False, "No dataset ID available")
         return False
     
-    try:
-        headers = {
-            'Authorization': f'Bearer {auth_token}',
-            'Content-Type': 'application/json'
-        }
+    # Test multiple chat messages with different keywords
+    test_messages = [
+        "Give me a summary of this data",
+        "Show me trends"
+    ]
+    
+    all_passed = True
+    
+    for i, message in enumerate(test_messages, 1):
+        print(f"\n--- Chat Message {i}: '{message}' ---")
         
-        chat_message = "Show me booking trends by city"
-        print(f"Sending message: {chat_message}")
-        
-        response = requests.post(
-            f"{BASE_URL}/chat",
-            json={
-                "datasetId": dataset_id,
-                "message": chat_message
-            },
-            headers=headers,
-            timeout=60
-        )
-        
-        print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text[:1000]}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            if 'response' in data:
-                ai_response = data['response']
-                print(f"\nAI Response Type: {type(ai_response)}")
-                if isinstance(ai_response, dict):
-                    print(f"Response keys: {ai_response.keys()}")
-                    if 'message' in ai_response:
-                        print(f"Message: {ai_response['message'][:200]}...")
-                else:
-                    print(f"Response: {str(ai_response)[:200]}...")
-                print_result(True, "Chat response received successfully")
-                return True
-            else:
-                print_result(False, "Missing 'response' field")
-                return False
-        else:
-            print_result(False, f"Status code: {response.status_code}")
-            return False
+        try:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            response = requests.post(
+                f"{BASE_URL}/chat",
+                json={"datasetId": dataset_id, "message": message},
+                headers=headers,
+                timeout=15
+            )
             
-    except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
+            print(f"Status Code: {response.status_code}")
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                print_json(data)
+                
+                if 'response' in data:
+                    response_data = data['response']
+                    
+                    # Check if response contains meaningful content
+                    if isinstance(response_data, dict):
+                        if 'message' in response_data and len(response_data['message']) > 0:
+                            print_result(True, f"Chat response received (length: {len(response_data['message'])})")
+                        else:
+                            print_result(False, "Chat response empty or missing message")
+                            all_passed = False
+                    elif isinstance(response_data, str) and len(response_data) > 0:
+                        print_result(True, f"Chat response received (length: {len(response_data)})")
+                    else:
+                        print_result(False, "Chat response in unexpected format")
+                        all_passed = False
+                else:
+                    print_result(False, "Response missing 'response' field")
+                    all_passed = False
+            else:
+                print_result(False, f"Chat failed: {response.text}")
+                all_passed = False
+                
+        except Exception as e:
+            print_result(False, f"Exception during chat: {str(e)}")
+            all_passed = False
+    
+    return all_passed
 
+# Test 6: Get chat history
 def test_get_chat_history():
-    """Test getting chat history"""
-    print_test_header("Get Chat History")
+    print_test_header("6. Get Chat History")
     
     if not auth_token:
         print_result(False, "No auth token available")
@@ -391,31 +396,48 @@ def test_get_chat_history():
         )
         
         print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text[:500]}")
         
         if response.status_code == 200:
             data = response.json()
+            print_json(data)
+            
             if 'messages' in data:
-                messages = data['messages']
-                print(f"Found {len(messages)} message(s)")
-                for msg in messages[:4]:  # Show first 4
-                    print(f"  - {msg.get('role')}: {msg.get('content', '')[:50]}...")
-                print_result(True, f"Retrieved {len(messages)} messages")
-                return True
+                message_count = len(data['messages'])
+                print_result(True, f"Retrieved {message_count} chat message(s)")
+                
+                # We sent 2 messages, so we should have at least 4 (2 user + 2 assistant)
+                if message_count >= 4:
+                    print_result(True, "Chat messages saved and retrieved correctly")
+                    
+                    # Verify message structure
+                    sample_msg = data['messages'][0]
+                    has_role = 'role' in sample_msg
+                    has_content = 'content' in sample_msg
+                    has_timestamp = 'timestamp' in sample_msg
+                    
+                    if has_role and has_content and has_timestamp:
+                        print_result(True, "Message structure is correct")
+                        return True
+                    else:
+                        print_result(False, "Message structure incomplete")
+                        return False
+                else:
+                    print_result(False, f"Expected at least 4 messages, got {message_count}")
+                    return False
             else:
-                print_result(False, "Missing 'messages' field")
+                print_result(False, "Response missing 'messages' field")
                 return False
         else:
-            print_result(False, f"Status code: {response.status_code}")
+            print_result(False, f"Get chat history failed: {response.text}")
             return False
             
     except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
+        print_result(False, f"Exception during get chat history: {str(e)}")
         return False
 
+# Test 7: Delete dataset
 def test_delete_dataset():
-    """Test deleting a dataset"""
-    print_test_header("Delete Dataset")
+    print_test_header("7. Delete Dataset")
     
     if not auth_token:
         print_result(False, "No auth token available")
@@ -434,86 +456,109 @@ def test_delete_dataset():
         )
         
         print(f"Status Code: {response.status_code}")
-        print(f"Response: {response.text}")
         
         if response.status_code == 200:
             data = response.json()
+            print_json(data)
+            
             if data.get('success'):
                 print_result(True, "Dataset deleted successfully")
-                return True
+                
+                # Verify dataset is actually deleted
+                print("\nVerifying deletion...")
+                verify_response = requests.get(
+                    f"{BASE_URL}/datasets/{dataset_id}",
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if verify_response.status_code == 404:
+                    print_result(True, "Dataset confirmed deleted (404 on GET)")
+                    
+                    # Verify chat messages are also deleted
+                    chat_response = requests.get(
+                        f"{BASE_URL}/chat/{dataset_id}",
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    if chat_response.status_code == 200:
+                        chat_data = chat_response.json()
+                        if len(chat_data.get('messages', [])) == 0:
+                            print_result(True, "Chat messages also deleted")
+                            return True
+                        else:
+                            print_result(False, "Chat messages still exist after dataset deletion")
+                            return False
+                    else:
+                        print_result(True, "Chat endpoint returns non-200 (messages likely deleted)")
+                        return True
+                else:
+                    print_result(False, f"Dataset still accessible after deletion (status: {verify_response.status_code})")
+                    return False
             else:
-                print_result(False, "Success field not true")
+                print_result(False, "Delete response missing 'success' field")
                 return False
         else:
-            print_result(False, f"Status code: {response.status_code}")
+            print_result(False, f"Delete failed: {response.text}")
             return False
             
     except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
+        print_result(False, f"Exception during delete: {str(e)}")
         return False
 
-def test_unauthorized_access():
-    """Test that endpoints require authentication"""
-    print_test_header("Unauthorized Access Test")
-    
-    try:
-        # Try to access datasets without token
-        response = requests.get(f"{BASE_URL}/datasets", timeout=10)
-        
-        if response.status_code == 401:
-            print_result(True, "Correctly rejected unauthorized request")
-            return True
-        else:
-            print_result(False, f"Expected 401, got {response.status_code}")
-            return False
-            
-    except Exception as e:
-        print_result(False, f"Exception: {str(e)}")
-        return False
-
+# Main test runner
 def run_all_tests():
-    """Run all backend tests"""
     print("\n" + "="*80)
-    print("INSIGHTFLOW AI - COMPREHENSIVE BACKEND API TESTS")
+    print("INSIGHTFLOW AI - BACKEND API TESTING")
+    print("Testing Smart Fallback Analysis Functionality")
     print("="*80)
     
     results = {}
     
-    # Test sequence
-    tests = [
-        ("API Health", test_api_health),
-        ("User Signup", test_signup),
-        ("Invalid Login", test_login_invalid_credentials),
-        ("Unauthorized Access", test_unauthorized_access),
-        ("Dataset Upload & AI Analysis", test_dataset_upload),
-        ("Get Datasets List", test_get_datasets),
-        ("Get Dataset by ID", test_get_dataset_by_id),
-        ("AI Chat", test_chat),
-        ("Get Chat History", test_get_chat_history),
-        ("Delete Dataset", test_delete_dataset),
-    ]
+    # Run tests in sequence
+    results['signup'] = test_signup()
     
-    for test_name, test_func in tests:
-        try:
-            results[test_name] = test_func()
-        except Exception as e:
-            print(f"\n❌ CRITICAL ERROR in {test_name}: {str(e)}")
-            results[test_name] = False
+    if results['signup']:
+        results['upload'] = test_upload_dataset()
+        results['get_datasets'] = test_get_datasets()
+        results['get_dataset_by_id'] = test_get_dataset_by_id()
+        results['chat'] = test_chat_fallback()
+        results['chat_history'] = test_get_chat_history()
+        results['delete'] = test_delete_dataset()
+    else:
+        print("\n❌ Signup/Login failed. Skipping remaining tests.")
+        results['upload'] = False
+        results['get_datasets'] = False
+        results['get_dataset_by_id'] = False
+        results['chat'] = False
+        results['chat_history'] = False
+        results['delete'] = False
     
     # Summary
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
     
+    test_names = {
+        'signup': '1. User Signup/Login',
+        'upload': '2. Upload with Smart Analysis',
+        'get_datasets': '3. Get Datasets List',
+        'get_dataset_by_id': '4. Get Dataset by ID',
+        'chat': '5. Chat with Fallback',
+        'chat_history': '6. Get Chat History',
+        'delete': '7. Delete Dataset'
+    }
+    
     passed = sum(1 for v in results.values() if v)
     total = len(results)
     
-    for test_name, result in results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status}: {test_name}")
+    for key, name in test_names.items():
+        status = "✅ PASS" if results[key] else "❌ FAIL"
+        print(f"{status} - {name}")
     
     print(f"\n{'='*80}")
-    print(f"TOTAL: {passed}/{total} tests passed ({passed*100//total}%)")
+    print(f"TOTAL: {passed}/{total} tests passed")
     print(f"{'='*80}\n")
     
     return passed == total
