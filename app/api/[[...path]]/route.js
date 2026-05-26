@@ -19,7 +19,7 @@ async function getDatabase() {
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: 'https://api.emergent.sh/v1'
+  baseURL: process.env.OPENAI_BASE_URL || 'https://api.emergent.sh/v1'
 })
 
 // JWT Helper
