@@ -17,10 +17,14 @@ async function getDatabase() {
   return client.db(process.env.DB_NAME)
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENAI_BASE_URL || 'https://api.emergent.sh/v1'
-})
+// Initialize OpenAI only if API key is provided
+let openai = null
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+  })
+}
 
 // JWT Helper
 function generateToken(userId) {
@@ -234,8 +238,9 @@ export async function POST(request) {
       let analysis
       
       try {
-        // Try AI analysis first
-        const analysisPrompt = `Analyze this dataset structure and provide insights:
+        // Try AI analysis first (only if OpenAI is configured)
+        if (openai) {
+          const analysisPrompt = `Analyze this dataset structure and provide insights:
 
 Dataset: ${file.name}
 Sheets: ${sheets.map(s => `${s.name} (${s.rowCount} rows, columns: ${s.columns.join(', ')})`).join('; ')}
@@ -253,17 +258,21 @@ Provide:
 
 Format as JSON with keys: dimensions, measures, dateFields, relationships, suggestedKPIs, insights`
 
-        const aiResponse = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: 'You are an expert data analyst. Analyze dataset structures and provide actionable insights.' },
-            { role: 'user', content: analysisPrompt }
-          ],
-          temperature: 0.7,
-          response_format: { type: 'json_object' }
-        })
+          const aiResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: 'You are an expert data analyst. Analyze dataset structures and provide actionable insights.' },
+              { role: 'user', content: analysisPrompt }
+            ],
+            temperature: 0.7,
+            response_format: { type: 'json_object' }
+          })
 
-        analysis = JSON.parse(aiResponse.choices[0].message.content)
+          analysis = JSON.parse(aiResponse.choices[0].message.content)
+        } else {
+          // No OpenAI configured, use fallback
+          throw new Error('OpenAI not configured')
+        }
       } catch (error) {
         console.log('AI analysis not available, using smart fallback analysis')
         
@@ -443,13 +452,17 @@ For insights or summaries, provide detailed analysis.`
       let aiMessage
       
       try {
-        const aiResponse = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages,
-          temperature: 0.8
-        })
+        if (openai) {
+          const aiResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages,
+            temperature: 0.8
+          })
 
-        aiMessage = aiResponse.choices[0].message.content
+          aiMessage = aiResponse.choices[0].message.content
+        } else {
+          throw new Error('OpenAI not configured')
+        }
       } catch (error) {
         console.log('AI chat not available, using smart fallback')
         
